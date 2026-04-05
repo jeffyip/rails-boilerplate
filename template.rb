@@ -2,7 +2,7 @@
 # Usage: rails new myapp --database=postgresql --template=template.rb
 
 def source_paths
-  [__dir__]
+  [__dir__] + Array(super)
 end
 
 # ============================================================
@@ -53,7 +53,6 @@ gem_group :development, :test do
   gem "factory_bot_rails"
   gem "faker"
   gem "standard"
-  gem "brakeman", require: false
 end
 
 gem_group :development do
@@ -61,8 +60,6 @@ gem_group :development do
 end
 
 gem_group :test do
-  gem "capybara"
-  gem "selenium-webdriver"
   gem "shoulda-matchers"
 end
 
