@@ -185,8 +185,8 @@ after_bundle do
     /devise :database_authenticatable.*:validatable/m,
     "devise :database_authenticatable, :registerable,\n" \
     "         :recoverable, :rememberable, :validatable,\n" \
-    "         :omniauthable, omniauth_providers: %i[google_oauth2 apple],\n" \
-    "         :magic_link_authenticatable"
+    "         :omniauthable, :magic_link_authenticatable,\n" \
+    "         omniauth_providers: %i[google_oauth2 apple]"
 
   # Add provider/uid columns for OAuth
   generate "migration", "AddOmniauthToUsers provider:string uid:string"
@@ -249,12 +249,13 @@ after_bundle do
   run "bundle exec rails generate devise:passwordless:install"
 
   # Devise routes (omniauth callbacks + magic links)
-  route <<~RUBY
-    devise_for :users, controllers: {
-      omniauth_callbacks: "users/omniauth_callbacks",
-      magic_links: "users/magic_links"
-    }
-  RUBY
+  # gsub the plain `devise_for :users` that `generate "devise", "User"` already wrote
+  gsub_file "config/routes.rb",
+    /devise_for :users\n/,
+    "devise_for :users, controllers: {\n" \
+    "    omniauth_callbacks: \"users/omniauth_callbacks\",\n" \
+    "    magic_links: \"users/magic_links\"\n" \
+    "  }\n"
 
   # --------------------------------------------------------
   # Sidekiq
