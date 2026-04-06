@@ -242,11 +242,6 @@ after_bundle do
   RUBY
 
   # --------------------------------------------------------
-  # Pay (billing)
-  # --------------------------------------------------------
-  run "bundle exec rails generate pay:install"
-
-  # --------------------------------------------------------
   # Flipper (feature flags)
   # --------------------------------------------------------
   generate "flipper:active_record"
@@ -382,9 +377,13 @@ after_bundle do
   say "Next steps:", :yellow
   say "  1. Copy .env.example to .env and fill in your keys"
   say "  2. Generate LOCKBOX_MASTER_KEY: bin/rails db:encryption:init"
-  say "  3. Set up acts_as_tenant if you need multi-tenancy"
-  say "  4. Review config/initializers/sentry.rb"
-  say "  5. Run: bin/dev"
+  say "  3. Set up Pay (billing):", :yellow
+  say "       bin/rails generate pay:install"
+  say "       bin/rails db:migrate"
+  say "       # Add `pay_customer` to your User model"
+  say "  4. Set up acts_as_tenant if you need multi-tenancy"
+  say "  5. Review config/initializers/sentry.rb"
+  say "  6. Run: bin/dev"
   say ""
   say "Admin-only routes (require user.admin? == true):", :yellow
   say "  /sidekiq  — background jobs"
