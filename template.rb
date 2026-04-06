@@ -296,6 +296,7 @@ after_bundle do
   # GitHub Actions CI
   # --------------------------------------------------------
   FileUtils.mkdir_p ".github/workflows"
+  remove_file ".github/workflows/ci.yml"
 
   create_file ".github/workflows/ci.yml" do
     <<~YAML
