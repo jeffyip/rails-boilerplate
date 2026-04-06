@@ -12,6 +12,9 @@ end
 # Auth
 gem "authentication-zero"
 
+# Styling
+gem "tailwindcss-rails"
+
 # Background jobs
 gem "sidekiq"
 
@@ -119,7 +122,7 @@ after_bundle do
     ENV
   end
 
-  append_to_file ".gitignore", "\n.env\n"
+  append_to_file ".gitignore", "\n.env\nnode_modules/\n"
 
   # --------------------------------------------------------
   # RSpec
@@ -148,6 +151,15 @@ after_bundle do
   # StandardRB
   # --------------------------------------------------------
   create_file ".standard.yml", "ruby_version: 3.3\n"
+
+  # --------------------------------------------------------
+  # Tailwind CSS + DaisyUI
+  # --------------------------------------------------------
+  generate "tailwindcss:install"
+
+  run "npm install daisyui"
+
+  append_to_file "app/assets/tailwind/application.css", '@plugin "daisyui";'
 
   # --------------------------------------------------------
   # Authentication
@@ -363,6 +375,93 @@ after_bundle do
   end
 
   # --------------------------------------------------------
+  # Dockerfile — patch for Railway compatibility
+  # --------------------------------------------------------
+
+  # Add libffi-dev (required by fiddle gem in Ruby 3.4+),
+  # nodejs and npm (required to install DaisyUI for Tailwind)
+  gsub_file "Dockerfile",
+    "build-essential git libpq-dev libvips libyaml-dev pkg-config",
+    "build-essential git libffi-dev libpq-dev libvips libyaml-dev nodejs npm pkg-config"
+
+  # Install JS dependencies before bundle install for better layer caching
+  gsub_file "Dockerfile", "# Install application gems\nCOPY vendor/* ./vendor/\nCOPY Gemfile Gemfile.lock ./" do
+    <<~DOCKERFILE.chomp
+      # Install JS dependencies (DaisyUI for Tailwind)
+      COPY package.json package-lock.json ./
+      RUN npm ci
+
+      # Install application gems
+      COPY vendor/* ./vendor/
+      COPY Gemfile Gemfile.lock ./
+    DOCKERFILE
+  end
+
+  # --------------------------------------------------------
+  # nixpacks.toml — Railway deployment
+  # --------------------------------------------------------
+  create_file "nixpacks.toml" do
+    <<~TOML
+      [phases.install]
+      cmds = ["bundle install", "npm install"]
+
+      [start]
+      cmd = "./bin/rails server"
+    TOML
+  end
+
+  # --------------------------------------------------------
+  # Production config — single database for Railway
+  # --------------------------------------------------------
+
+  # Use DATABASE_URL for all production connections (single Railway Postgres)
+  gsub_file "config/database.yml", /^production:.*\z/m do
+    <<~YAML
+      production:
+        <<: *default
+        url: <%= ENV["DATABASE_URL"] %>
+    YAML
+  end
+
+  # Enable SSL, remove solid_queue multi-database connects_to
+  gsub_file "config/environments/production.rb",
+    "# config.assume_ssl = true",
+    "config.assume_ssl = true"
+
+  gsub_file "config/environments/production.rb",
+    "# config.force_ssl = true",
+    "config.force_ssl = true"
+
+  gsub_file "config/environments/production.rb",
+    /config\.solid_queue\.connects_to = .+\n/, ""
+
+  # Remove connects_to from Solid Cable (points to secondary :cable database)
+  gsub_file "config/cable.yml", /  connects_to:\n    database:\n      writing: cable\n/, ""
+
+  # Remove database: cache from Solid Cache config
+  gsub_file "config/cache.yml", /  database: cache\n/, ""
+
+  # Merge Solid Cache/Queue/Cable table definitions into main schema.rb
+  # (needed because db:prepare only loads db/schema.rb with a single-database setup)
+  after_schema_merge = []
+  after_fk_merge = []
+
+  %w[db/cache_schema.rb db/queue_schema.rb db/cable_schema.rb].each do |f|
+    next unless File.exist?(f)
+    content = File.read(f)
+    content.scan(/  create_table .+?^  end$/m) { |t| after_schema_merge << t }
+    content.scan(/  add_foreign_key .+$/) { |fk| after_fk_merge << fk }
+  end
+
+  unless after_schema_merge.empty?
+    gsub_file "db/schema.rb", /^end\z/ do
+      after_schema_merge.join("\n\n") + "\n\n" +
+        after_fk_merge.join("\n") + "\n\n" +
+        "end"
+    end
+  end
+
+  # --------------------------------------------------------
   # Database setup & migrations
   # --------------------------------------------------------
   rails_command "db:create"
@@ -391,5 +490,13 @@ after_bundle do
   say "  /sidekiq  — background jobs"
   say "  /pghero   — Postgres performance"
   say "  /flipper  — feature flags"
+  say ""
+  say "Deploying to Railway:", :yellow
+  say "  1. Push to GitHub"
+  say "  2. Create a new Railway project from your repo"
+  say "  3. Add a Postgres plugin — DATABASE_URL is set automatically"
+  say "  4. Set these environment variables in Railway:"
+  say "       RAILS_MASTER_KEY  → contents of config/master.key"
+  say "       LOCKBOX_MASTER_KEY → from bin/rails db:encryption:init"
   say ""
 end
