@@ -1,5 +1,5 @@
 # Rails Boilerplate Template
-# Usage: rails new myapp --database=postgresql --template=template.rb
+# Usage: rails new myapp --database=postgresql --css tailwind --template=template.rb
 
 def source_paths
   [__dir__] + Array(super)
@@ -10,10 +10,11 @@ end
 # ============================================================
 
 # Auth
-gem "authentication-zero"
-
-# Styling
-gem "tailwindcss-rails"
+gem "devise"
+gem "devise-passwordless"
+gem "omniauth-google-oauth2"
+gem "omniauth-apple"
+gem "omniauth-rails_csrf_protection"
 
 # Background jobs
 gem "sidekiq"
@@ -99,6 +100,14 @@ after_bundle do
       AWS_BUCKET=
       AWS_REGION=us-east-1
 
+      # Google OAuth
+      GOOGLE_CLIENT_ID=
+      GOOGLE_CLIENT_SECRET=
+
+      # Apple OAuth
+      APPLE_CLIENT_ID=
+      APPLE_CLIENT_SECRET=
+
       # Encryption (generate with: bin/rails db:encryption:init)
       LOCKBOX_MASTER_KEY=
     ENV
@@ -117,6 +126,12 @@ after_bundle do
       AWS_SECRET_ACCESS_KEY=
       AWS_BUCKET=
       AWS_REGION=us-east-1
+
+      GOOGLE_CLIENT_ID=
+      GOOGLE_CLIENT_SECRET=
+
+      APPLE_CLIENT_ID=
+      APPLE_CLIENT_SECRET=
 
       LOCKBOX_MASTER_KEY=
     ENV
@@ -153,18 +168,94 @@ after_bundle do
   create_file ".standard.yml", "ruby_version: 3.3\n"
 
   # --------------------------------------------------------
-  # Tailwind CSS + DaisyUI
+  # DaisyUI (Tailwind plugin — Tailwind itself is set up via --css tailwind)
   # --------------------------------------------------------
-  generate "tailwindcss:install"
-
   run "npm install daisyui"
 
   append_to_file "app/assets/tailwind/application.css", '@plugin "daisyui";'
 
   # --------------------------------------------------------
-  # Authentication
+  # Authentication (Devise)
   # --------------------------------------------------------
-  generate "authentication"
+  generate "devise:install"
+  generate "devise", "User"
+
+  # Add omniauth + magic links to the devise call
+  gsub_file "app/models/user.rb",
+    /devise :database_authenticatable.*:validatable/m,
+    "devise :database_authenticatable, :registerable,\n" \
+    "         :recoverable, :rememberable, :validatable,\n" \
+    "         :omniauthable, :magic_link_authenticatable,\n" \
+    "         omniauth_providers: %i[google_oauth2 apple]"
+
+  # Add provider/uid columns for OAuth
+  generate "migration", "AddOmniauthToUsers provider:string uid:string"
+
+  # Add from_omniauth to User model
+  inject_into_file "app/models/user.rb", before: "end\n" do
+    <<~RUBY
+
+      def self.from_omniauth(auth)
+        where(provider: auth.provider, uid: auth.uid).first_or_create do |user|
+          user.email = auth.info.email
+          user.password = Devise.friendly_token[0, 20]
+        end
+      end
+    RUBY
+  end
+
+  # Configure mailer URL options for Devise
+  environment 'config.action_mailer.default_url_options = { host: "localhost", port: 3000 }', env: "development"
+
+  # Configure OmniAuth providers in Devise initializer
+  inject_into_file "config/initializers/devise.rb",
+    after: "# config.omniauth :github, 'APP_ID', 'APP_SECRET', scope: 'user,public_repo'\n" do
+    <<~RUBY
+      config.omniauth :google_oauth2, ENV["GOOGLE_CLIENT_ID"], ENV["GOOGLE_CLIENT_SECRET"]
+      config.omniauth :apple, ENV["APPLE_CLIENT_ID"], ENV["APPLE_CLIENT_SECRET"]
+    RUBY
+  end
+
+  # OmniAuth callbacks controller
+  FileUtils.mkdir_p "app/controllers/users"
+  create_file "app/controllers/users/omniauth_callbacks_controller.rb" do
+    <<~RUBY
+      class Users::OmniauthCallbacksController < Devise::OmniauthCallbacksController
+        def google_oauth2
+          handle_auth "Google"
+        end
+
+        def apple
+          handle_auth "Apple"
+        end
+
+        private
+
+        def handle_auth(kind)
+          @user = User.from_omniauth(request.env["omniauth.auth"])
+          if @user.persisted?
+            sign_in_and_redirect @user, event: :authentication
+            set_flash_message(:notice, :success, kind: kind) if is_navigational_format?
+          else
+            session["devise.auth_data"] = request.env["omniauth.auth"].except(:extra)
+            redirect_to new_user_registration_url, alert: @user.errors.full_messages.join("\\n")
+          end
+        end
+      end
+    RUBY
+  end
+
+  # devise-passwordless: generates mailer and token migration
+  run "bundle exec rails generate devise:passwordless:install"
+
+  # Devise routes (omniauth callbacks + magic links)
+  # gsub the plain `devise_for :users` that `generate "devise", "User"` already wrote
+  gsub_file "config/routes.rb",
+    /devise_for :users\n/,
+    "devise_for :users, controllers: {\n" \
+    "    omniauth_callbacks: \"users/omniauth_callbacks\",\n" \
+    "    magic_links: \"users/magic_links\"\n" \
+    "  }\n"
 
   # --------------------------------------------------------
   # Sidekiq
@@ -248,13 +339,7 @@ after_bundle do
   route <<~RUBY
     require "sidekiq/web"
 
-    admin_constraint = ->(req) {
-      user_id = req.session[:user_id]
-      user = User.find_by(id: user_id)
-      user&.admin?
-    }
-
-    constraints admin_constraint do
+    authenticate :user, ->(u) { u.admin? } do
       mount Sidekiq::Web => "/sidekiq"
       mount PgHero::Engine => "/pghero"
       mount Flipper::UI.app(Flipper) => "/flipper"
@@ -271,11 +356,6 @@ after_bundle do
   # --------------------------------------------------------
   inject_into_file "app/controllers/application_controller.rb", after: "class ApplicationController < ActionController::Base\n" do
     <<~RUBY
-      def current_user
-        Current.user
-      end
-      helper_method :current_user
-
       include Pretender
       impersonates :user
     RUBY
@@ -441,8 +521,32 @@ after_bundle do
   # Remove database: cache from Solid Cache config
   gsub_file "config/cache.yml", /  database: cache\n/, ""
 
+  # --------------------------------------------------------
+  # Git hooks — install Brakeman pre-push hook via bin/setup
+  # --------------------------------------------------------
+  inject_into_file "bin/setup", after: "puts \"\\n== Removing old logs and tempfiles ==\"\n" do
+    <<~'RUBY'
+
+      puts "\n== Installing git hooks =="
+      hook = ".git/hooks/pre-push"
+      unless File.exist?(hook)
+        File.write(hook, "#!/bin/sh\necho \"Running Brakeman security scan...\"\nbundle exec brakeman --no-pager -q\n")
+        FileUtils.chmod("+x", hook)
+        puts "  Installed pre-push Brakeman hook"
+      end
+
+    RUBY
+  end
+
+  # --------------------------------------------------------
+  # Database setup & migrations
+  # --------------------------------------------------------
+  rails_command "db:create"
+  rails_command "db:migrate"
+
   # Merge Solid Cache/Queue/Cable table definitions into main schema.rb
   # (needed because db:prepare only loads db/schema.rb with a single-database setup)
+  # Must run after db:migrate so schema.rb exists.
   after_schema_merge = []
   after_fk_merge = []
 
@@ -460,12 +564,6 @@ after_bundle do
         "end"
     end
   end
-
-  # --------------------------------------------------------
-  # Database setup & migrations
-  # --------------------------------------------------------
-  rails_command "db:create"
-  rails_command "db:migrate"
 
   # --------------------------------------------------------
   # Done
