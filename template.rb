@@ -1,5 +1,5 @@
 # Rails Boilerplate Template
-# Usage: rails new myapp --database=postgresql --template=template.rb
+# Usage: rails new myapp --database=postgresql --css tailwind --template=template.rb
 
 def source_paths
   [__dir__] + Array(super)
@@ -15,9 +15,6 @@ gem "devise-passwordless"
 gem "omniauth-google-oauth2"
 gem "omniauth-apple"
 gem "omniauth-rails_csrf_protection"
-
-# Styling
-gem "tailwindcss-rails"
 
 # Background jobs
 gem "sidekiq"
@@ -171,10 +168,8 @@ after_bundle do
   create_file ".standard.yml", "ruby_version: 3.3\n"
 
   # --------------------------------------------------------
-  # Tailwind CSS + DaisyUI
+  # DaisyUI (Tailwind plugin — Tailwind itself is set up via --css tailwind)
   # --------------------------------------------------------
-  generate "tailwindcss:install"
-
   run "npm install daisyui"
 
   append_to_file "app/assets/tailwind/application.css", '@plugin "daisyui";'
