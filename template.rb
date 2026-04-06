@@ -244,7 +244,7 @@ after_bundle do
   # --------------------------------------------------------
   # Pay (billing)
   # --------------------------------------------------------
-  generate "pay:install"
+  run "bundle exec rails generate pay:install"
 
   # --------------------------------------------------------
   # Flipper (feature flags)
