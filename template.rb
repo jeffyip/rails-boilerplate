@@ -246,7 +246,7 @@ after_bundle do
   end
 
   # devise-passwordless: generates mailer and token migration
-  run "bundle exec rails generate devise_passwordless:install"
+  run "bundle exec rails generate devise:passwordless:install"
 
   # Devise routes (omniauth callbacks + magic links)
   route <<~RUBY
