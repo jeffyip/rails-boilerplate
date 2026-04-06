@@ -520,26 +520,6 @@ after_bundle do
   # Remove database: cache from Solid Cache config
   gsub_file "config/cache.yml", /  database: cache\n/, ""
 
-  # Merge Solid Cache/Queue/Cable table definitions into main schema.rb
-  # (needed because db:prepare only loads db/schema.rb with a single-database setup)
-  after_schema_merge = []
-  after_fk_merge = []
-
-  %w[db/cache_schema.rb db/queue_schema.rb db/cable_schema.rb].each do |f|
-    next unless File.exist?(f)
-    content = File.read(f)
-    content.scan(/  create_table .+?^  end$/m) { |t| after_schema_merge << t }
-    content.scan(/  add_foreign_key .+$/) { |fk| after_fk_merge << fk }
-  end
-
-  unless after_schema_merge.empty?
-    gsub_file "db/schema.rb", /^end\z/ do
-      after_schema_merge.join("\n\n") + "\n\n" +
-        after_fk_merge.join("\n") + "\n\n" +
-        "end"
-    end
-  end
-
   # --------------------------------------------------------
   # Git hooks — install Brakeman pre-push hook via bin/setup
   # --------------------------------------------------------
@@ -562,6 +542,27 @@ after_bundle do
   # --------------------------------------------------------
   rails_command "db:create"
   rails_command "db:migrate"
+
+  # Merge Solid Cache/Queue/Cable table definitions into main schema.rb
+  # (needed because db:prepare only loads db/schema.rb with a single-database setup)
+  # Must run after db:migrate so schema.rb exists.
+  after_schema_merge = []
+  after_fk_merge = []
+
+  %w[db/cache_schema.rb db/queue_schema.rb db/cable_schema.rb].each do |f|
+    next unless File.exist?(f)
+    content = File.read(f)
+    content.scan(/  create_table .+?^  end$/m) { |t| after_schema_merge << t }
+    content.scan(/  add_foreign_key .+$/) { |fk| after_fk_merge << fk }
+  end
+
+  unless after_schema_merge.empty?
+    gsub_file "db/schema.rb", /^end\z/ do
+      after_schema_merge.join("\n\n") + "\n\n" +
+        after_fk_merge.join("\n") + "\n\n" +
+        "end"
+    end
+  end
 
   # --------------------------------------------------------
   # Done
