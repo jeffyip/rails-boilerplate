@@ -170,13 +170,6 @@ after_bundle do
     YAML
   end
 
-  route <<~RUBY
-    require "sidekiq/web"
-
-    authenticate :user, ->(u) { u.admin? } do
-      mount Sidekiq::Web => "/sidekiq"
-    end
-  RUBY
 
   # --------------------------------------------------------
   # Action Mailer
@@ -235,19 +228,23 @@ after_bundle do
   generate "pghero:query_stats"
   generate "pghero:space_stats"
 
-  route <<~RUBY
-    authenticate :user, ->(u) { u.admin? } do
-      mount PgHero::Engine => "/pghero"
-    end
-  RUBY
-
   # --------------------------------------------------------
   # Flipper (feature flags)
   # --------------------------------------------------------
   generate "flipper:active_record"
 
   route <<~RUBY
-    authenticate :user, ->(u) { u.admin? } do
+    require "sidekiq/web"
+
+    admin_constraint = ->(req) {
+      user_id = req.session[:user_id]
+      user = User.find_by(id: user_id)
+      user&.admin?
+    }
+
+    constraints admin_constraint do
+      mount Sidekiq::Web => "/sidekiq"
+      mount PgHero::Engine => "/pghero"
       mount Flipper::UI.app(Flipper) => "/flipper"
     end
   RUBY
@@ -262,8 +259,12 @@ after_bundle do
   # --------------------------------------------------------
   inject_into_file "app/controllers/application_controller.rb", after: "class ApplicationController < ActionController::Base\n" do
     <<~RUBY
-      include Pretender
+      def current_user
+        Current.user
+      end
+      helper_method :current_user
 
+      include Pretender
       impersonates :user
     RUBY
   end
