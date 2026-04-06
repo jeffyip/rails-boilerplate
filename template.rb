@@ -546,6 +546,23 @@ after_bundle do
   end
 
   # --------------------------------------------------------
+  # Git hooks — install Brakeman pre-push hook via bin/setup
+  # --------------------------------------------------------
+  inject_into_file "bin/setup", after: "puts \"\\n== Removing old logs and tempfiles ==\"\n" do
+    <<~'RUBY'
+
+      puts "\n== Installing git hooks =="
+      hook = ".git/hooks/pre-push"
+      unless File.exist?(hook)
+        File.write(hook, "#!/bin/sh\necho \"Running Brakeman security scan...\"\nbundle exec brakeman --no-pager -q\n")
+        FileUtils.chmod("+x", hook)
+        puts "  Installed pre-push Brakeman hook"
+      end
+
+    RUBY
+  end
+
+  # --------------------------------------------------------
   # Database setup & migrations
   # --------------------------------------------------------
   rails_command "db:create"
